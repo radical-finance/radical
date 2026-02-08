@@ -24,32 +24,20 @@ contract UniswapOracle is IUniswapOracle, Initializable {
         emit UniswapToolingSet(_uniswapTooling);
     }
 
-    // TODO add ovservations to the constructor or call
-    // TODO twap interval should be a parameter
-    // TODO tooling is actually a singleton, so have it on initialization
     function sqrtPriceX96(IUniswapV3Pool pool, uint32 twapInterval) external view override returns (uint256) {
-        (
-            ,
-            int24 tick, // uint16 observationIndex
-            ,
-            ,
-            ,
-            ,
-        ) = // uint16 observationCardinality
-        // uint16 observationCardinalityNext
-         pool.slot0();
+        uint32[] memory secondsAgo = new uint32[](2);
 
-        // TODO make this longer and a parameter
-        uint32[] memory secondsAgos = new uint32[](2);
-        // TODO error not enough oracles to make a deposit
-        secondsAgos[0] = twapInterval; // 30 minutes ago
-        secondsAgos[1] = 0; // now
+        secondsAgo[0] = twapInterval;
+        secondsAgo[1] = 0; // now
 
-        (int56[] memory tickCumulatives,) = pool.observe(secondsAgos);
+        (int56[] memory tickCumulatives,) = pool.observe(secondsAgo);
 
         // Calculate time-weighted average tick
         int56 tickCumulativesDelta = tickCumulatives[1] - tickCumulatives[0];
         int24 averageTick = int24(tickCumulativesDelta / int56(uint56(twapInterval)));
+
+        // Adjust for negative rounding (Solidity truncates towards zero, we need floor)
+        if (tickCumulativesDelta < 0 && (tickCumulativesDelta % int56(uint56(twapInterval)) != 0)) averageTick--;
 
         // Convert tick to price (sqrtPriceX96)
         return uint256(uniswapTooling.TickMath_getSqrtRatioAtTick(averageTick));

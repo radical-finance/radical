@@ -32,10 +32,7 @@ contract MainnetTest is Test {
         (
             ,
             int24 tick, // uint16 observationIndex
-            ,
-            ,
-            ,
-            ,
+            ,,,,
         ) = staking.getPool().slot0();
         console.log("current tick is", tick);
 

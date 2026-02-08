@@ -67,7 +67,7 @@ jobs:
         if: steps.check-changes.outputs.has-changes == 'true'
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: v1.1.0
+          version: v1.5.0
 
       - name: Show Forge version
         if: steps.check-changes.outputs.has-changes == 'true'

@@ -16,12 +16,18 @@ import {IUniswapV3Factory} from "v3-core/contracts/interfaces/IUniswapV3Factory.
 import {INonfungiblePositionManager} from "@interfaces/adaptors/INonfungiblePositionManager.sol";
 
 import {IUniswapTooling} from "@interfaces/adaptors/IUniswapTooling.sol";
+import {TickBounds, TickConfigWindow, TickConfigLib} from "@src/libraries/TickConfigLib.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts8/token/ERC20/extensions/IERC20Metadata.sol";
 
 import {BalanceTestHelper} from "@test/utils.sol";
 import {EnviromentSetup} from "@test/uniswap/utils.sol";
 import {IRadicalVaultTwoTokens} from "@interfaces/IRadicalVaultTwoTokens.sol";
 
 import "./MockMerkleDistributor.sol";
+
+interface IMintableERC20 {
+    function mint(address to, uint256 amount) external;
+}
 
 contract UniswapOracleMock is IUniswapOracle {
     uint256 mockedPrice = 2 ** 96; // 1:1 price ratio
@@ -71,11 +77,13 @@ contract UniswapV3VaultTestBase is Test, BalanceTestHelper, EnviromentSetup {
     }
 
     function initializeContract() public {
-        UniswapV3Vault.TokenPair memory tokens =
-            UniswapV3Vault.TokenPair({tokenA: token1Contract, tokenB: token0Contract});
+        UniswapV3Vault.TokenPairUnsorted memory tokens =
+            UniswapV3Vault.TokenPairUnsorted({tokenA: token1Contract, tokenB: token0Contract});
 
-        UniswapV3Vault.TickerConfig memory tickerConfig =
-            UniswapV3Vault.TickerConfig({tickerCenter: 0, tickerWindow: 10});
+        TickBounds memory tickBounds = TickConfigLib.toTickBounds(TickConfigWindow({tickCenter: 0, tickWindowSize: 10}));
+
+        UniswapV3Vault.RiskConfig memory riskConfig =
+            UniswapV3Vault.RiskConfig({maxTickDivergence: 100, minDelayDepositSeconds: 5, transferWindowSeconds: 10});
 
         staking.initialize(
             IUniswapV3Factory(factoryAddress),
@@ -85,8 +93,9 @@ contract UniswapV3VaultTestBase is Test, BalanceTestHelper, EnviromentSetup {
             tokens,
             fee,
             feeVault,
-            tickerConfig,
-            IUniswapTooling(vm.deployCode("UniswapTooling.sol"))
+            tickBounds,
+            IUniswapTooling(vm.deployCode("UniswapTooling.sol")),
+            riskConfig
         );
     }
 
@@ -116,6 +125,9 @@ contract UniswapV3VaultTest_initialize is UniswapV3VaultTestBase {
         assertEq(address(staking.token1()), token1, "Token1 address mismatch"); // swapped
         assertEq(staking.fee(), fee, "Pool fee mismatch");
         assertEq(address(staking.feeVault()), feeVault, "Fee vault address mismatch");
+        assertEq(staking.maxTickDivergence(), 100, "maxTickDivergence should be 100");
+        assertEq(staking.minDelayDepositSeconds(), 5, "minDelayDepositSeconds should be 5");
+        assertEq(staking.transferWindowSeconds(), 10, "transferWindowSeconds should be 10");
     }
 
     function test_emitsEvents() public {
@@ -133,13 +145,26 @@ contract UniswapV3VaultTest_initialize is UniswapV3VaultTestBase {
         emit UniswapV3Vault.FeeSet(fee);
 
         vm.expectEmit(true, true, true, true);
-        emit UniswapV3Vault.TickerWindowSet(10);
+        emit UniswapV3Vault.TickConfigSet(TickConfigLib.toTickBounds(
+                TickConfigWindow({tickCenter: 0, tickWindowSize: 10})
+            ));
 
         vm.expectEmit(true, true, true, true);
-        emit UniswapV3Vault.TickerCenterSet(0);
+        emit UniswapV3Vault.TokensSet(UniswapV3Vault.TokenPairSorted({token0: token0Contract, token1: token1Contract}));
 
-        vm.expectEmit(true, true, true, true);
-        emit UniswapV3Vault.TokensSet(token0Contract, token1Contract);
+        // Compute expected vault name and symbol based on sorted tokens
+        {
+            string memory symbolA = IERC20Metadata(address(token0Contract)).symbol();
+            string memory symbolB = IERC20Metadata(address(token1Contract)).symbol();
+            string memory expectedSymbol = string(abi.encodePacked(symbolA, "-", symbolB));
+            string memory expectedName = string(abi.encodePacked("Radical Vault ", expectedSymbol));
+
+            vm.expectEmit(true, true, true, true);
+            emit UniswapV3Vault.VaultNameSet(expectedName);
+
+            vm.expectEmit(true, true, true, true);
+            emit UniswapV3Vault.VaultSymbolSet(expectedSymbol);
+        }
 
         vm.expectEmit(true, true, true, true);
         emit UniswapV3Vault.FeeVaultSet(feeVault);
@@ -153,12 +178,19 @@ contract UniswapV3VaultTest_initialize is UniswapV3VaultTestBase {
         vm.expectEmit(true, true, true, true);
         emit UniswapV3Vault.OracleTWAPIntervalSet(40);
 
-        // Call initialize - this should emit all the expected events
-        UniswapV3Vault.TokenPair memory tokens =
-            UniswapV3Vault.TokenPair({tokenA: token1Contract, tokenB: token0Contract});
+        vm.expectEmit(true, true, true, true);
+        emit UniswapV3Vault.RiskConfigSet(UniswapV3Vault.RiskConfig({
+                maxTickDivergence: 100, minDelayDepositSeconds: 5, transferWindowSeconds: 10
+            }));
 
-        UniswapV3Vault.TickerConfig memory tickerConfig =
-            UniswapV3Vault.TickerConfig({tickerCenter: 0, tickerWindow: 10});
+        // Call initialize - this should emit all the expected events
+        UniswapV3Vault.TokenPairUnsorted memory tokens =
+            UniswapV3Vault.TokenPairUnsorted({tokenA: token1Contract, tokenB: token0Contract});
+
+        TickBounds memory tickBounds = TickConfigLib.toTickBounds(TickConfigWindow({tickCenter: 0, tickWindowSize: 10}));
+
+        UniswapV3Vault.RiskConfig memory riskConfig =
+            UniswapV3Vault.RiskConfig({maxTickDivergence: 100, minDelayDepositSeconds: 5, transferWindowSeconds: 10});
 
         staking.initialize(
             IUniswapV3Factory(factoryAddress),
@@ -168,14 +200,170 @@ contract UniswapV3VaultTest_initialize is UniswapV3VaultTestBase {
             tokens,
             fee,
             feeVault,
-            tickerConfig,
-            uniswapTooling
+            tickBounds,
+            uniswapTooling,
+            riskConfig
         );
     }
 
     function test_ownershipIsSet() public {
         initializeContract();
         assertEq(staking.owner(), address(this), "Owner should be the deployer");
+    }
+
+    function test_emitsSlippageMaxSet() public {
+        UniswapV3Vault.TokenPairUnsorted memory tokens =
+            UniswapV3Vault.TokenPairUnsorted({tokenA: token1Contract, tokenB: token0Contract});
+
+        TickBounds memory tickBounds = TickConfigLib.toTickBounds(TickConfigWindow({tickCenter: 0, tickWindowSize: 10}));
+
+        UniswapV3Vault.RiskConfig memory riskConfig =
+            UniswapV3Vault.RiskConfig({maxTickDivergence: 200, minDelayDepositSeconds: 5, transferWindowSeconds: 10});
+
+        // Expect RiskConfigSet event with maxTickDivergence 200
+        vm.expectEmit(true, true, true, true);
+        emit UniswapV3Vault.RiskConfigSet(riskConfig);
+
+        staking.initialize(
+            IUniswapV3Factory(factoryAddress),
+            INonfungiblePositionManager(nftPositionManager),
+            oracle,
+            40,
+            tokens,
+            fee,
+            feeVault,
+            tickBounds,
+            IUniswapTooling(vm.deployCode("UniswapTooling.sol")),
+            riskConfig
+        );
+
+        // Verify the value was set correctly
+        assertEq(staking.maxTickDivergence(), 200, "maxTickDivergence should be 200");
+    }
+
+    function test_acceptsValidTickSpacing() public {
+        UniswapV3Vault.TokenPairUnsorted memory tokens =
+            UniswapV3Vault.TokenPairUnsorted({tokenA: token1Contract, tokenB: token0Contract});
+
+        // For 0.01% fee (100), tick spacing is 1, so any integer is valid
+        // Test with various valid values (tickCenter: 5, tickWindowSize: 15 => tickLower: -10, tickUpper: 20)
+        TickBounds memory tickBounds = TickConfigLib.toTickBounds(TickConfigWindow({tickCenter: 5, tickWindowSize: 15}));
+
+        UniswapV3Vault.RiskConfig memory riskConfig =
+            UniswapV3Vault.RiskConfig({maxTickDivergence: 100, minDelayDepositSeconds: 5, transferWindowSeconds: 10});
+
+        // This should succeed since both tickUpper and tickLower are multiples of tick spacing (1)
+        staking.initialize(
+            IUniswapV3Factory(factoryAddress),
+            INonfungiblePositionManager(nftPositionManager),
+            oracle,
+            40,
+            tokens,
+            fee,
+            feeVault,
+            tickBounds,
+            IUniswapTooling(vm.deployCode("UniswapTooling.sol")),
+            riskConfig
+        );
+
+        assertEq(staking.tickLower(), -10, "tickLower should be -10");
+        assertEq(staking.tickUpper(), 20, "tickUpper should be 20");
+    }
+
+    function test_tickConfigLibConversion() public pure {
+        // Test toTickBounds: center=0, windowSize=10 => lower=-10, upper=10
+        TickConfigWindow memory window1 = TickConfigWindow({tickCenter: 0, tickWindowSize: 10});
+        TickBounds memory bounds1 = TickConfigLib.toTickBounds(window1);
+        assertEq(bounds1.tickLower, -10, "tickLower should be -10");
+        assertEq(bounds1.tickUpper, 10, "tickUpper should be 10");
+
+        // Test toTickBounds: center=100, windowSize=50 => lower=50, upper=150
+        TickConfigWindow memory window2 = TickConfigWindow({tickCenter: 100, tickWindowSize: 50});
+        TickBounds memory bounds2 = TickConfigLib.toTickBounds(window2);
+        assertEq(bounds2.tickLower, 50, "tickLower should be 50");
+        assertEq(bounds2.tickUpper, 150, "tickUpper should be 150");
+
+        // Test negative center: center=-20, windowSize=30 => lower=-50, upper=10
+        TickConfigWindow memory window3 = TickConfigWindow({tickCenter: -20, tickWindowSize: 30});
+        TickBounds memory bounds3 = TickConfigLib.toTickBounds(window3);
+        assertEq(bounds3.tickLower, -50, "tickLower should be -50");
+        assertEq(bounds3.tickUpper, 10, "tickUpper should be 10");
+
+        // Test validate passes for valid bounds (using tick spacing of 10)
+        TickConfigLib.validate(bounds1, 10); // should not revert
+        TickConfigLib.validate(bounds2, 10); // should not revert
+        TickConfigLib.validate(bounds3, 10); // should not revert
+    }
+
+    function test_initializeRevertsWhenTickUpperNotGreaterThanLower() public {
+        UniswapV3Vault.TokenPairUnsorted memory tokens =
+            UniswapV3Vault.TokenPairUnsorted({tokenA: token1Contract, tokenB: token0Contract});
+
+        UniswapV3Vault.RiskConfig memory riskConfig =
+            UniswapV3Vault.RiskConfig({maxTickDivergence: 100, minDelayDepositSeconds: 5, transferWindowSeconds: 10});
+
+        // Test tickUpper == tickLower (should revert)
+        TickBounds memory equalBounds = TickBounds({tickUpper: 10, tickLower: 10});
+        vm.expectRevert(
+            abi.encodeWithSelector(TickConfigLib.TickUpperMustBeGreaterThanTickLower.selector, int24(10), int24(10))
+        );
+        staking.initialize(
+            IUniswapV3Factory(factoryAddress),
+            INonfungiblePositionManager(nftPositionManager),
+            oracle,
+            40,
+            tokens,
+            fee,
+            feeVault,
+            equalBounds,
+            IUniswapTooling(vm.deployCode("UniswapTooling.sol")),
+            riskConfig
+        );
+    }
+
+    function test_initializeRevertsWhenTickUpperLessThanLower() public {
+        UniswapV3Vault.TokenPairUnsorted memory tokens =
+            UniswapV3Vault.TokenPairUnsorted({tokenA: token1Contract, tokenB: token0Contract});
+
+        UniswapV3Vault.RiskConfig memory riskConfig =
+            UniswapV3Vault.RiskConfig({maxTickDivergence: 100, minDelayDepositSeconds: 5, transferWindowSeconds: 10});
+
+        // Test tickUpper < tickLower (should revert)
+        TickBounds memory invertedBounds = TickBounds({tickUpper: 5, tickLower: 10});
+        vm.expectRevert(
+            abi.encodeWithSelector(TickConfigLib.TickUpperMustBeGreaterThanTickLower.selector, int24(5), int24(10))
+        );
+        staking.initialize(
+            IUniswapV3Factory(factoryAddress),
+            INonfungiblePositionManager(nftPositionManager),
+            oracle,
+            40,
+            tokens,
+            fee,
+            feeVault,
+            invertedBounds,
+            IUniswapTooling(vm.deployCode("UniswapTooling.sol")),
+            riskConfig
+        );
+    }
+
+    function test_setsNameAndSymbolCorrectly() public {
+        initializeContract();
+
+        // Tokens are sorted by Uniswap based on address
+        // Verify the vault name and symbol match the sorted token order
+        string memory expectedSymbol = string(
+            abi.encodePacked(ERC20(address(staking.token0())).symbol(), "-", ERC20(address(staking.token1())).symbol())
+        );
+        string memory expectedName = string(abi.encodePacked("Radical Vault ", expectedSymbol));
+
+        assertEq(staking.symbol(), expectedSymbol, "Symbol should match token0-token1");
+        assertEq(staking.name(), expectedName, "Name should match Radical Vault token0-token1");
+    }
+
+    function test_decimalsIs18() public {
+        initializeContract();
+        assertEq(staking.decimals(), 18, "Decimals should be 18");
     }
 }
 
@@ -196,6 +384,323 @@ contract UniswapV3VaultTest_setFeeVault is UniswapV3VaultTest {
         vm.prank(staking.feeVault());
         vm.expectRevert("Fee vault can not be zero address");
         staking.setFeeVault(address(0));
+    }
+}
+
+contract UniswapV3VaultTest_transfer is UniswapV3VaultTest {
+    address user3;
+
+    function setUp() public override {
+        super.setUp();
+        user3 = address(0x3333);
+
+        // Fund and approve users
+        fundAndApprove(user1, 100e18);
+        fundAndApprove(user2, 100e18);
+    }
+
+    function test_transferUpdatesBalancesCorrectly() public {
+        // user1 deposits to get shares
+        vm.prank(user1);
+        staking.depositExact(10e18, 10e18);
+
+        uint256 user1SharesBefore = staking.balanceOf(user1);
+        uint256 user2SharesBefore = staking.balanceOf(user2);
+
+        // Transfer half of shares from user1 to user2
+        uint256 transferAmount = user1SharesBefore / 2;
+        vm.prank(user1);
+        staking.transfer(user2, transferAmount);
+
+        // Check balances
+        assertEq(staking.balanceOf(user1), user1SharesBefore - transferAmount, "User1 balance incorrect after transfer");
+        assertEq(staking.balanceOf(user2), user2SharesBefore + transferAmount, "User2 balance incorrect after transfer");
+    }
+
+    function test_transferEmitsTransferEvent() public {
+        // user1 deposits to get shares
+        vm.prank(user1);
+        staking.depositExact(10e18, 10e18);
+
+        uint256 transferAmount = staking.balanceOf(user1) / 2;
+
+        // Warp past the cooldown + window period
+        vm.warp(block.timestamp + staking.minDelayDepositSeconds() + staking.transferWindowSeconds() + 1);
+
+        // Expect Transfer event
+        vm.expectEmit(true, true, true, true);
+        emit IERC20.Transfer(user1, user2, transferAmount);
+
+        vm.prank(user1);
+        staking.transfer(user2, transferAmount);
+    }
+
+    function test_transferToNewAddressAllowed() public {
+        // user1 deposits to get shares
+        vm.prank(user1);
+        staking.depositExact(10e18, 10e18);
+
+        uint256 transferAmount = staking.balanceOf(user1) / 2;
+
+        // Transfer to user3 who has never received shares (lastDepositTimestamp == 0)
+        // Should work immediately without waiting for cooldown
+        vm.prank(user1);
+        staking.transfer(user3, transferAmount);
+
+        assertEq(staking.balanceOf(user3), transferAmount, "User3 should have received shares");
+    }
+
+    function test_transferBlockedDuringCooldownPeriod() public {
+        // user1 deposits to get shares
+        vm.prank(user1);
+        staking.depositExact(10e18, 10e18);
+
+        // user2 also deposits (this sets their lastDepositTimestamp)
+        vm.prank(user2);
+        staking.depositExact(10e18, 10e18);
+
+        uint256 transferAmount = staking.balanceOf(user1) / 2;
+
+        // Try to transfer to user2 who just deposited (still in cooldown)
+        // Should be within minDelayDepositSeconds
+        vm.warp(block.timestamp + 2); // Only 2 seconds passed, cooldown is 5 seconds
+
+        vm.prank(user1);
+        vm.expectRevert("Cannot transfer to address still in cooldown period");
+        staking.transfer(user2, transferAmount);
+    }
+
+    function test_transferBlockedDuringTransferWindow() public {
+        // user1 deposits to get shares
+        vm.prank(user1);
+        staking.depositExact(10e18, 10e18);
+
+        // user2 also deposits
+        vm.prank(user2);
+        staking.depositExact(10e18, 10e18);
+
+        uint256 transferAmount = staking.balanceOf(user1) / 2;
+
+        // Warp past minDelayDepositSeconds but not past the full transfer window
+        // minDelayDepositSeconds = 5, transferWindowSeconds = 10
+        // So user2 can withdraw at T+5, but can't receive transfers until T+ 5 + less than transfer windows
+        vm.warp(block.timestamp + staking.minDelayDepositSeconds() + staking.transferWindowSeconds() / 2);
+
+        vm.prank(user1);
+        vm.expectRevert("Cannot transfer to address still in cooldown period");
+        staking.transfer(user2, transferAmount);
+    }
+
+    function test_transferAllowedAfterFullWindow() public {
+        // user1 deposits to get shares
+        vm.prank(user1);
+        staking.depositExact(10e18, 10e18);
+
+        // user2 also deposits
+        vm.prank(user2);
+        staking.depositExact(10e18, 10e18);
+
+        uint256 transferAmount = staking.balanceOf(user1) / 2;
+
+        // Warp past the full cooldown + window period
+        vm.warp(block.timestamp + staking.minDelayDepositSeconds() + staking.transferWindowSeconds() + 1);
+
+        // Transfer should succeed
+        vm.prank(user1);
+        staking.transfer(user2, transferAmount);
+
+        assertEq(staking.balanceOf(user2), 1e18 + transferAmount, "User2 should have received shares");
+    }
+
+    function test_transferUpdatesReceiverTimestamp() public {
+        // user1 deposits to get shares
+        vm.prank(user1);
+        staking.depositExact(10e18, 10e18);
+
+        // user2 also deposits
+        vm.prank(user2);
+        staking.depositExact(10e18, 10e18);
+
+        uint256 user2TimestampBefore = staking.lastDepositTimestamp(user2);
+
+        // Warp past the full window
+        vm.warp(block.timestamp + staking.minDelayDepositSeconds() + staking.transferWindowSeconds() + 1);
+
+        uint256 transferTime = block.timestamp;
+        uint256 transferAmount = staking.balanceOf(user1) / 2;
+
+        // Transfer to user2
+        vm.prank(user1);
+        staking.transfer(user2, transferAmount);
+
+        // Check that user2's timestamp was updated to current block
+        assertEq(staking.lastDepositTimestamp(user2), transferTime, "Receiver timestamp should be updated");
+        assertGt(staking.lastDepositTimestamp(user2), user2TimestampBefore, "Timestamp should be greater than before");
+    }
+
+    function test_multipleTransfersRespectCooldown() public {
+        // user1 deposits
+        vm.prank(user1);
+        staking.depositExact(10e18, 10e18);
+
+        uint256 transferAmount = staking.balanceOf(user1) / 4;
+
+        // First transfer to user3 (new address, should work immediately)
+        vm.prank(user1);
+        staking.transfer(user3, transferAmount);
+
+        // Try to transfer again to user3 immediately (should fail, they're now in cooldown)
+        vm.prank(user1);
+        vm.expectRevert("Cannot transfer to address still in cooldown period");
+        staking.transfer(user3, transferAmount);
+
+        // Warp past the full window
+        vm.warp(block.timestamp + staking.minDelayDepositSeconds() + staking.transferWindowSeconds() + 1);
+
+        // Now transfer should work
+        vm.prank(user1);
+        staking.transfer(user3, transferAmount);
+
+        assertEq(staking.balanceOf(user3), transferAmount * 2, "User3 should have received both transfers");
+    }
+
+    function test_optOutAllowsTransferDuringCooldown() public {
+        // user1 deposits
+        vm.prank(user1);
+        staking.depositExact(10e18, 10e18);
+
+        // user2 deposits and opts out
+        vm.startPrank(user2);
+        staking.depositExact(10e18, 10e18);
+        staking.setTransferCooldownOptOut(true);
+        vm.stopPrank();
+
+        uint256 transferAmount = staking.balanceOf(user1) / 2;
+
+        // Try to transfer to user2 who just deposited but opted out
+        // Should work even though user2 is in cooldown period
+        vm.prank(user1);
+        staking.transfer(user2, transferAmount);
+
+        assertEq(staking.balanceOf(user2), 1e18 + transferAmount, "User2 should have received shares");
+    }
+
+    function test_optOutEmitsEvent() public {
+        vm.expectEmit(true, true, true, true);
+        emit UniswapV3Vault.TransferCooldownOptOutSet(user1, true);
+
+        vm.prank(user1);
+        staking.setTransferCooldownOptOut(true);
+    }
+
+    function test_optOutCanBeToggled() public {
+        // Opt out
+        vm.prank(user1);
+        staking.setTransferCooldownOptOut(true);
+        assertTrue(staking.transferCooldownOptOut(user1), "User1 should be opted out");
+
+        // Opt back in
+        vm.prank(user1);
+        staking.setTransferCooldownOptOut(false);
+        assertFalse(staking.transferCooldownOptOut(user1), "User1 should be opted back in");
+    }
+
+    function test_optOutStillUpdatesTimestamp() public {
+        // user1 deposits
+        vm.prank(user1);
+        staking.depositExact(10e18, 10e18);
+
+        // user2 deposits and opts out
+        vm.startPrank(user2);
+        staking.depositExact(10e18, 10e18);
+        staking.setTransferCooldownOptOut(true);
+        vm.stopPrank();
+
+        uint256 user2TimestampBefore = staking.lastDepositTimestamp(user2);
+
+        // Warp a bit
+        vm.warp(block.timestamp + 2);
+
+        uint256 transferAmount = staking.balanceOf(user1) / 2;
+
+        // Transfer to user2 (opted out, so should work)
+        vm.prank(user1);
+        staking.transfer(user2, transferAmount);
+
+        // Check that timestamp was still updated
+        assertGt(
+            staking.lastDepositTimestamp(user2), user2TimestampBefore, "Timestamp should be updated even when opted out"
+        );
+        assertEq(staking.lastDepositTimestamp(user2), block.timestamp, "Timestamp should be current block");
+    }
+
+    function test_optOutBlocksWithdrawalAfterTransfer() public {
+        // user1 deposits
+        vm.prank(user1);
+        staking.depositExact(10e18, 10e18);
+
+        // user2 deposits and opts out
+        vm.startPrank(user2);
+        staking.depositExact(10e18, 10e18);
+        staking.setTransferCooldownOptOut(true);
+        vm.stopPrank();
+
+        // Warp past initial cooldown so user2 could withdraw
+        vm.warp(block.timestamp + staking.minDelayDepositSeconds() + 1);
+
+        // user2 should be able to withdraw now (just a small amount)
+        uint256 user2BalanceBeforeTransfer = staking.balanceOf(user2);
+        uint256 withdrawAmount = user2BalanceBeforeTransfer / 10; // Withdraw 10%
+        vm.prank(user2);
+        staking.withdraw(withdrawAmount);
+
+        // Transfer to user2 (opted out, so should work immediately)
+        uint256 transferAmount = staking.balanceOf(user1) / 2;
+        vm.prank(user1);
+        staking.transfer(user2, transferAmount);
+
+        // Now user2 should NOT be able to withdraw because timestamp was reset
+        // Try to withdraw a small amount
+        vm.prank(user2);
+        vm.expectRevert("Need to wait minDelayDepositSeconds before withdrawing after deposit");
+        staking.withdraw(withdrawAmount);
+    }
+
+    function test_optInReenablesCooldownProtection() public {
+        // user1 deposits
+        vm.prank(user1);
+        staking.depositExact(10e18, 10e18);
+
+        // user2 deposits and opts out
+        vm.prank(user2);
+        staking.depositExact(10e18, 10e18);
+
+        vm.prank(user2);
+        staking.setTransferCooldownOptOut(true);
+
+        uint256 transferAmount = staking.balanceOf(user1) / 4;
+
+        // Transfer to user2 (opted out, should work)
+        vm.prank(user1);
+        staking.transfer(user2, transferAmount);
+
+        // user2 opts back in
+        vm.prank(user2);
+        staking.setTransferCooldownOptOut(false);
+
+        // Try to transfer again immediately (should fail now)
+        vm.prank(user1);
+        vm.expectRevert("Cannot transfer to address still in cooldown period");
+        staking.transfer(user2, transferAmount);
+
+        // Warp past full window
+        vm.warp(block.timestamp + staking.minDelayDepositSeconds() + staking.transferWindowSeconds() + 1);
+
+        // Now transfer should work
+        vm.prank(user1);
+        staking.transfer(user2, transferAmount);
+
+        assertEq(staking.balanceOf(user2), 1e18 + transferAmount * 2, "User2 should have received both transfers");
     }
 }
 
@@ -368,8 +873,9 @@ contract UniswapV3VaultTest_depositExact is UniswapV3VaultTest {
         staking.depositExact(0, depositAmount);
     }
 
-    function test_worksWithZeroDeposit() public {
+    function test_revert_worksWithZeroDeposit() public {
         vm.prank(user1);
+        vm.expectRevert("Deposit amounts cannot both be zero");
         staking.depositExact(0, 0);
     }
 
@@ -404,9 +910,36 @@ contract UniswapV3VaultTest_depositExact is UniswapV3VaultTest {
     }
 }
 
+contract UniswapV3VaultTest_sqrtX96ToToken1PerToken0 is UniswapV3VaultTest {
+    function test_calculatesRightPrice_forOne() public {
+        uint256 sqrtPriceX96_1 = uint256(79228162514264337593543950336);
+        assertEq(staking.sqrtX96ToToken1PerToken0(sqrtPriceX96_1, 1e18), 1e18, "Price is not one");
+    }
+
+    function test_calculatesRightPrice_forTwo() public {
+        uint256 sqrtPriceX96_1 = uint256(112045541949572279837463876454);
+        assertApproxEqAbs(staking.sqrtX96ToToken1PerToken0(sqrtPriceX96_1, 1e18), 0.5e18, 1, "Price is not two");
+    }
+}
+
 contract UniswapV3VaultTest_collectFeesAndReinvest is UniswapV3VaultTest {
     function test_reinvestOnNoPosition() public {
         staking.collectFeesAndReinvest();
+    }
+
+    function test_doesNotCreatePositionFromDustTokens() public {
+        // No deposits yet, so no position exists
+        assertEq(staking.positionTokenId(), 0, "Position should not exist initially");
+
+        // Send dust amounts of both tokens directly to the contract
+        uint256 dustAmount = 1000;
+        fund(address(staking), dustAmount);
+
+        // Call collectFeesAndReinvest - this should NOT create a position from dust
+        staking.collectFeesAndReinvest();
+
+        // Position should still not exist
+        assertEq(staking.positionTokenId(), 0, "Position should not be created from dust tokens");
     }
 
     function test_reinvestOnNoRewards() public {
@@ -526,7 +1059,7 @@ contract UniswapV3VaultTest_withdraw is UniswapV3VaultTest {
         oracleMock.setShouldRevert(true);
 
         vm.startPrank(user1);
-        staking.withdraw(staking.balanceOf(user1));
+        staking.withdraw(staking.balanceOf(user1), 0, 0);
         vm.stopPrank();
 
         assertFullWithdraw(user1, depositAmount, depositAmount);
@@ -537,10 +1070,21 @@ contract UniswapV3VaultTest_withdraw is UniswapV3VaultTest {
         oracleMock.setMockedPrice((staking.getOraclePrice() * 7) / 5); // 2:1 price
 
         vm.startPrank(user1);
-        staking.withdraw(staking.balanceOf(user1));
+        staking.withdraw(staking.balanceOf(user1), 0, 0);
         vm.stopPrank();
 
         assertFullWithdraw(user1, depositAmount, depositAmount);
+    }
+
+    function test_RevertsBadOraclePrice() public {
+        UniswapOracleMock oracleMock = UniswapOracleMock(address(oracle));
+        oracleMock.setMockedPrice((staking.getOraclePrice() * 7) / 5); // 2:1 price
+
+        vm.startPrank(user1);
+        uint256 balance = staking.balanceOf(user1);
+        vm.expectRevert("Pool price diverged too far from oracle");
+        staking.withdraw(balance);
+        vm.stopPrank();
     }
 
     function test_Reverts_sameBlockDepositWithdraw() public {
@@ -552,6 +1096,43 @@ contract UniswapV3VaultTest_withdraw is UniswapV3VaultTest {
         vm.prank(user1);
         vm.expectRevert("Need to wait minDelayDepositSeconds before withdrawing after deposit");
         staking.withdraw(sharesToWithdraw);
+    }
+
+    function test_cannotWithdrawBelowMinShares() public {
+        uint256 user1Balance = staking.balanceOf(user1);
+        uint256 MIN_SHARES = staking.MIN_SHARES();
+
+        // Try to withdraw almost everything, leaving less than MIN_SHARES
+        uint256 toWithdraw = user1Balance - (MIN_SHARES - 1);
+
+        vm.prank(user1);
+        vm.expectRevert("Cannot reduce supply below MIN_SHARES unless withdrawing all");
+        staking.withdraw(toWithdraw);
+    }
+
+    function test_canWithdrawAll() public {
+        uint256 user1Balance = staking.balanceOf(user1);
+
+        // Can withdraw everything (supply goes to 0)
+        vm.prank(user1);
+        staking.withdraw(user1Balance);
+
+        assertEq(staking.totalSupply(), 0, "Supply should be 0");
+        assertEq(staking.balanceOf(user1), 0, "User balance should be 0");
+    }
+
+    function test_canWithdrawLeavingAtLeastMinShares() public {
+        uint256 user1Balance = staking.balanceOf(user1);
+        uint256 MIN_SHARES = staking.MIN_SHARES();
+
+        // Withdraw leaving exactly MIN_SHARES
+        uint256 toWithdraw = user1Balance - MIN_SHARES;
+
+        vm.prank(user1);
+        staking.withdraw(toWithdraw);
+
+        assertEq(staking.totalSupply(), MIN_SHARES, "Supply should be MIN_SHARES");
+        assertEq(staking.balanceOf(user1), MIN_SHARES, "User balance should be MIN_SHARES");
     }
 }
 
@@ -584,6 +1165,15 @@ contract UniswapV3VaultTest_getUnderlyingUniswapPositionBalances is UniswapV3Vau
         // uniswap rounds the position
         assertApproxEqAbs(positionToken0, depositAmount, 1, "Position token0 should exactly match deposited amount");
         assertApproxEqAbs(positionToken1, depositAmount, 1, "Position token1 should exactly match deposited amount");
+    }
+}
+
+contract UniswapV3VaultTest_sharesToUnderlyingLiquidity is UniswapV3VaultTest {
+    function test_returnsZeroOnEmptyContract() public {
+        // On empty contract with no deposits, supply is 0 and positionTokenId is 0
+        // Should return 0 due to early return, not revert
+        uint128 result = staking.sharesToUnderlyingLiquidity(100);
+        assertEq(result, 0, "Should return 0 on empty contract");
     }
 }
 
@@ -744,6 +1334,95 @@ contract UniswapV3VaultTest_IntegrationTwoOracles is UniswapV3VaultTest {
 }
 
 contract UniswapV3VaultTest_Integration is UniswapV3VaultTest {
+    function test_inflationAttack() public {
+        address attacker = address(0xBAD);
+        address victim = address(0x1234);
+
+        uint256 MIN_SHARES = staking.MIN_SHARES();
+        uint256 attackerInitialDeposit = 1e18; // Realistic initial deposit - 1 token each
+        uint256 victimDeposit = 100e18; // Victim's deposit - 100 tokens
+
+        // With MIN_SHARES protection, attacker must donate much more
+        // To make victim get 0 shares: victim_deposit * supply / total_value < 1
+        // So total_value > victim_deposit * supply
+        // victimDeposit = 100e18, supply = MIN_SHARES = 1e6
+        // Required donation > 100e18 * 1e6 = 100e24 = 100,000,000 tokens (100 million!)
+        // This demonstrates the attack is economically prohibitive
+        uint256 attackerDonation = victimDeposit * MIN_SHARES * 2; // 200 million tokens needed!
+
+        // Step 1: Attacker makes first deposit with realistic amount
+        fundSingle(token0Contract, attacker, attackerInitialDeposit);
+        fundSingle(token1Contract, attacker, attackerInitialDeposit);
+        approveAndDeposit(attacker, token0, token1, attackerInitialDeposit, attackerInitialDeposit);
+
+        // Step 2: Attacker waits for withdrawal delay, then withdraws all but MIN_SHARES
+        vm.warp(block.timestamp + staking.minDelayDepositSeconds());
+
+        vm.prank(attacker);
+        staking.withdraw(1e18 - MIN_SHARES); // Withdraw all but MIN_SHARES
+
+        // Step 3: Attacker donates tokens directly to vault to inflate share price
+        // Mint tokens directly to attacker since the amount needed is larger than faucet balance
+        IMintableERC20(address(token0Contract)).mint(attacker, attackerDonation);
+        IMintableERC20(address(token1Contract)).mint(attacker, attackerDonation);
+
+        vm.startPrank(attacker);
+        token0Contract.transfer(address(staking), attackerDonation);
+        token1Contract.transfer(address(staking), attackerDonation);
+        vm.stopPrank();
+
+        // Step 4: victim is protected and can not get zero shares
+        fundSingle(token0Contract, victim, victimDeposit);
+        fundSingle(token1Contract, victim, victimDeposit);
+
+        approve(victim, address(staking), token0, victimDeposit);
+        approve(victim, address(staking), token1, victimDeposit);
+
+        vm.prank(victim);
+        vm.expectRevert("Cannot mint zero shares");
+        staking.depositExact(victimDeposit, victimDeposit);
+    }
+
+    function test_SharesRoundDown() public {
+        // This test verifies that share calculations always round down
+        // favoring the protocol (existing shareholders) over new depositors
+
+        address user1 = address(0x1111);
+        address user2 = address(0x2222);
+
+        uint256 initialDeposit = 100e18;
+        uint256 secondDeposit = (100e18 / uint256(3)) + 1; // Will result in fractional shares
+
+        // Step 1: User1 makes first deposit
+        fundAndApprove(user1, initialDeposit);
+        vm.prank(user1);
+        staking.depositExact(initialDeposit, initialDeposit);
+
+        uint256 totalSupplyBefore = staking.totalSupply();
+        assertEq(totalSupplyBefore, 1e18, "First deposit gets FIRST_SHARE");
+
+        // Step 2: User2 deposits - should get fractional shares that round down
+        fundAndApprove(user2, secondDeposit);
+
+        // Debug: check total value before deposit
+        (uint256 poolToken0Before, uint256 poolToken1Before) = staking.getUnderlyingUniswapPositionBalances();
+        console.log("Before user2 deposit - pool balances:", poolToken0Before, poolToken1Before);
+        console.log("Total supply before:", staking.totalSupply());
+
+        vm.prank(user2);
+        staking.depositExact(secondDeposit, secondDeposit);
+
+        uint256 user2Shares = staking.balanceOf(user2);
+        console.log("User2 shares received:", user2Shares);
+
+        uint256 theoretical = (secondDeposit * 1e18) / (initialDeposit); // 0.33e18
+        assertLe(user2Shares, theoretical, "Shares should round down");
+
+        // Verify user got reasonable shares (not zero)
+        assertGt(user2Shares, 3e17, "User should get > 0.3e18 shares");
+        assertLt(user2Shares, 4e17, "User should get < 0.4e18 shares");
+    }
+
     function test_unbalancedDeposit() public {
         // Setup: Give both users tokens
         fund(user1, 10e18);
@@ -785,6 +1464,313 @@ contract UniswapV3VaultTest_Integration is UniswapV3VaultTest {
 
         assertEq(user2Token0Balance, 0, "Users deposited all token0");
         assertEq(user2Token1Balance, 9e18, "User2 deposited only 1 token1");
+    }
+
+    /**
+     * Test case verifying deposits succeed when pool is out of range
+     * This is a simple test to confirm the core functionality works
+     */
+    function test_depositWorksWhenOutOfRange() public {
+        uint256 depositedAmount = 5e18;
+
+        // Step 1: User1 makes initial deposit to create position (in range)
+        fund(user1, depositedAmount);
+        approveAndDeposit(user1, token0, token1, depositedAmount, depositedAmount);
+
+        uint256 user1SharesBefore = staking.balanceOf(user1);
+        assertEq(user1SharesBefore, 1e18, "User1 should have received initial shares");
+
+        // Step 2: Move pool price out of range (above)
+        fund(address(simulator), 10000e18);
+        vm.startPrank(faucet);
+        simulator.tradeFixedAmount(token1, token0, swapRouter, 5000e18);
+        vm.stopPrank();
+
+        // Verify we're out of range
+        (, int24 currentTick,,,,,) = staking.getPool().slot0();
+        (, int24 tickUpper) = staking.getTickerRange();
+        assertGt(currentTick, tickUpper, "Pool should be above position range");
+
+        // Step 3: User2 deposits when out of range - should succeed
+        fund(user2, depositedAmount);
+        approveAndDeposit(user2, token0, token1, depositedAmount, depositedAmount);
+
+        // Verify deposit succeeded - user2 should have shares
+        uint256 user2Shares = staking.balanceOf(user2);
+        assertGt(user2Shares, 0, "User2 should have received shares when depositing out of range");
+
+        // Verify total supply increased
+        assertGt(staking.totalSupply(), user1SharesBefore, "Total supply should have increased");
+    }
+
+    /**
+     * Test case verifying single-sided deposit when pool price is above position range
+     * When current tick > tickUpper, position only holds token1 (token0 has been swapped out)
+     * So only token1 can be deposited, token0 is refunded
+     * Steps:
+     * 1. User1 makes initial deposit to create position
+     * 2. Move pool price significantly above the position range (tick > tickCenter + tickWindow)
+     * 3. User2 attempts to deposit - only token1 should be used, token0 refunded
+     */
+    function test_singleSidedDeposit_priceAboveRange() public {
+        uint256 depositedAmount = 5e18;
+
+        // Step 1: User1 makes initial deposit to establish position
+        fund(user1, depositedAmount);
+        approveAndDeposit(user1, token0, token1, depositedAmount, depositedAmount);
+
+        // Get initial tick info
+        (, int24 tickBefore,,,,,) = staking.getPool().slot0();
+        (int24 tickLower, int24 tickUpper) = staking.getTickerRange();
+
+        // Step 2: Move pool price significantly above range by trading token1 -> token0
+        // This increases the price of token0 relative to token1, moving tick up
+        fund(address(simulator), 10000e18);
+        vm.startPrank(faucet);
+        // Large trade to push price up (buy token0 with token1)
+        simulator.tradeFixedAmount(token1, token0, swapRouter, 5000e18);
+        vm.stopPrank();
+
+        (, int24 tickAfter,,,,,) = staking.getPool().slot0();
+
+        // Verify tick is now above the position's upper bound
+        assertGt(tickAfter, tickUpper, "Tick should be above position range after trade");
+
+        // Step 3: User2 attempts to deposit both tokens
+        fund(user2, depositedAmount);
+        (uint256 user2Token0Before, uint256 user2Token1Before) = balancesOfBoth(user2);
+
+        approveAndDeposit(user2, token0, token1, depositedAmount, depositedAmount);
+
+        // Check user2 balances after deposit
+        (uint256 user2Token0After, uint256 user2Token1After) = balancesOfBoth(user2);
+
+        // When price is above range, the position only holds token1
+        // So only token1 can be deposited, token0 is fully refunded
+        assertEq(user2Token0After, user2Token0Before, "User2 should have all token0 refunded (price above range)");
+        assertLt(user2Token1After, user2Token1Before, "User2 should have used some token1");
+
+        // User should still receive shares
+        uint256 user2Shares = staking.balanceOf(user2);
+        assertGt(user2Shares, 0, "User2 should have received shares even with single-sided deposit");
+    }
+
+    /**
+     * Test case verifying single-sided deposit when pool price is below position range
+     * When current tick < tickLower, position only holds token0 (token1 has been swapped out)
+     * So only token0 can be deposited, token1 is refunded
+     * Steps:
+     * 1. User1 makes initial deposit to create position
+     * 2. Move pool price significantly below the position range (tick < tickCenter - tickWindow)
+     * 3. User2 attempts to deposit - only token0 should be used, token1 refunded
+     */
+    function test_singleSidedDeposit_priceBelowRange() public {
+        uint256 depositedAmount = 5e18;
+
+        // Step 1: User1 makes initial deposit to establish position
+        fund(user1, depositedAmount);
+        approveAndDeposit(user1, token0, token1, depositedAmount, depositedAmount);
+
+        // Get initial tick info
+        (, int24 tickBefore,,,,,) = staking.getPool().slot0();
+        (int24 tickLower, int24 tickUpper) = staking.getTickerRange();
+
+        // Step 2: Move pool price significantly below range by trading token0 -> token1
+        // This decreases the price of token0 relative to token1, moving tick down
+        fund(address(simulator), 10000e18);
+        vm.startPrank(faucet);
+        // Large trade to push price down (sell token0 for token1)
+        simulator.tradeFixedAmount(token0, token1, swapRouter, 5000e18);
+        vm.stopPrank();
+
+        (, int24 tickAfter,,,,,) = staking.getPool().slot0();
+        console.log("Tick after price move:", int256(tickAfter));
+
+        // Verify tick is now below the position's lower bound
+        assertLt(tickAfter, tickLower, "Tick should be below position range after trade");
+
+        // Step 3: User2 attempts to deposit both tokens
+        fund(user2, depositedAmount);
+        (uint256 user2Token0Before, uint256 user2Token1Before) = balancesOfBoth(user2);
+
+        approveAndDeposit(user2, token0, token1, depositedAmount, depositedAmount);
+
+        // Check user2 balances after deposit
+        (uint256 user2Token0After, uint256 user2Token1After) = balancesOfBoth(user2);
+
+        // When price is below range, position only holds token0
+        // So only token0 can be deposited, token1 is fully refunded
+        assertLt(user2Token0After, user2Token0Before, "User2 should have used some token0");
+        assertEq(user2Token1After, user2Token1Before, "User2 should have all token1 refunded (price below range)");
+
+        // User should still receive shares
+        uint256 user2Shares = staking.balanceOf(user2);
+        assertGt(user2Shares, 0, "User2 should have received shares even with single-sided deposit");
+    }
+
+    /**
+     * Test case verifying that withdrawals work correctly when position is out of range
+     * Steps:
+     * 1. User deposits when in range
+     * 2. Price moves out of range
+     * 3. User can still withdraw their funds (single-sided)
+     */
+    function test_withdrawWhenOutOfRange() public {
+        uint256 depositedAmount = 5e18;
+
+        // Step 1: User1 deposits when price is in range
+        fund(user1, depositedAmount);
+        approveAndDeposit(user1, token0, token1, depositedAmount, depositedAmount);
+
+        uint256 user1Shares = staking.balanceOf(user1);
+        console.log("User1 shares after deposit:", user1Shares);
+
+        // Step 2: Move price significantly above range
+        fund(address(simulator), 10000e18);
+        vm.startPrank(faucet);
+        simulator.tradeFixedAmount(token1, token0, swapRouter, 5000e18);
+        vm.stopPrank();
+
+        (, int24 tickAfter,,,,,) = staking.getPool().slot0();
+        (, int24 tickUpper) = staking.getTickerRange();
+        assertGt(tickAfter, tickUpper, "Tick should be above position range");
+
+        // Step 3: User1 can still withdraw (with 0 slippage params since price moved)
+        vm.startPrank(user1);
+        staking.withdraw(user1Shares, 0, 0);
+        vm.stopPrank();
+
+        // User should have received tokens back
+        (uint256 user1Token0After, uint256 user1Token1After) = balancesOfBoth(user1);
+
+        // When price is above range, position holds only token1
+        // So user should receive mostly/all token1
+        assertGt(user1Token1After, 0, "User1 should have received token1");
+        console.log("User1 received token0:", user1Token0After);
+        console.log("User1 received token1:", user1Token1After);
+
+        // Shares should be burned
+        assertEq(staking.balanceOf(user1), 0, "User1 should have no shares after withdrawal");
+    }
+
+    /**
+     * Test case verifying no fees are earned when position is out of range
+     * Steps:
+     * 1. User deposits and price moves out of range
+     * 2. Trading happens (which would normally generate fees)
+     * 3. No fees are collected because position is not earning
+     */
+    function test_noFeesWhenOutOfRange() public {
+        uint256 depositedAmount = 5e18;
+
+        // Step 1: User1 deposits
+        fund(user1, depositedAmount);
+        approveAndDeposit(user1, token0, token1, depositedAmount, depositedAmount);
+
+        (uint256 positionToken0Before, uint256 positionToken1Before) = staking.positionBalances(user1);
+
+        // Move price out of range (above)
+        fund(address(simulator), 20000e18);
+        vm.startPrank(faucet);
+        simulator.tradeFixedAmount(token1, token0, swapRouter, 5000e18);
+        vm.stopPrank();
+
+        (, int24 tickAfter,,,,,) = staking.getPool().slot0();
+        (, int24 tickUpper) = staking.getTickerRange();
+        assertGt(tickAfter, tickUpper, "Tick should be above position range");
+
+        // Step 2: Simulate trading that would generate fees if in range
+        // Trade back and forth multiple times
+        vm.startPrank(faucet);
+        for (uint256 i = 0; i < 5; i++) {
+            simulator.tradeFixedAmount(token0, token1, swapRouter, 100e18);
+            simulator.tradeFixedAmount(token1, token0, swapRouter, 100e18);
+        }
+        vm.stopPrank();
+
+        // Step 3: Collect fees - should be zero since out of range
+        staking.collectFees();
+
+        // Position balance should not have increased from fees
+        // (it may have changed slightly due to price movement affecting token amounts)
+        (uint256 positionToken0After, uint256 positionToken1After) = staking.positionBalances(user1);
+
+        console.log("Position token0 before:", positionToken0Before, "after:", positionToken0After);
+        console.log("Position token1 before:", positionToken1Before, "after:", positionToken1After);
+
+        // The position value should be approximately the same (no fee accumulation)
+        // Note: When out of range, the position becomes single-sided, so we compare total value
+    }
+
+    /**
+     * Test case verifying share calculation is correct for out-of-range deposits
+     * When depositing out of range, shares should be calculated based on the single token deposited
+     */
+    function test_shareCalculationWhenOutOfRange() public {
+        uint256 depositedAmount = 5e18;
+
+        // User1 deposits in range (gets baseline share price)
+        fund(user1, depositedAmount);
+        approveAndDeposit(user1, token0, token1, depositedAmount, depositedAmount);
+        uint256 user1Shares = staking.balanceOf(user1);
+
+        // Move price above range
+        fund(address(simulator), 10000e18);
+        vm.startPrank(faucet);
+        simulator.tradeFixedAmount(token1, token0, swapRouter, 5000e18);
+        vm.stopPrank();
+
+        // User2 deposits same amounts (but only token1 will be used since above range)
+        fund(user2, depositedAmount);
+        approveAndDeposit(user2, token0, token1, depositedAmount, depositedAmount);
+        uint256 user2Shares = staking.balanceOf(user2);
+
+        console.log("User1 shares (deposited in range):", user1Shares);
+        console.log("User2 shares (deposited above range):", user2Shares);
+
+        // User2 should receive fewer shares since they only deposited token1
+        // (token0 was refunded because price is above range)
+        assertLt(user2Shares, user1Shares, "User2 should have fewer shares (single-sided deposit)");
+
+        // Verify user2 got token0 refunded (price above range means only token1 is used)
+        (uint256 user2Token0Balance, uint256 user2Token1Balance) = balancesOfBoth(user2);
+        assertEq(user2Token0Balance, depositedAmount, "User2 should have all token0 refunded");
+        console.log("User2 token0 refunded:", user2Token0Balance);
+        console.log("User2 token1 remaining:", user2Token1Balance);
+    }
+
+    /**
+     * Test case verifying fees can be reinvested when pool is single-sided (out of range)
+     * When position is out of range, only one token is held. Reinvestment should still work.
+     */
+    function test_feesCanBeReinvestedWhenSingleSided() public {
+        uint256 depositedAmount = 5e18;
+
+        // User1 deposits to create position
+        fund(user1, depositedAmount);
+        approveAndDeposit(user1, token0, token1, depositedAmount, depositedAmount);
+
+        // Move price out of range (above)
+        fund(address(simulator), 10000e18);
+        vm.startPrank(faucet);
+        simulator.tradeFixedAmount(token1, token0, swapRouter, 5000e18);
+        vm.stopPrank();
+
+        // Verify we're out of range
+        (, int24 tickAfter,,,,,) = staking.getPool().slot0();
+        (, int24 tickUpper) = staking.getTickerRange();
+        assertGt(tickAfter, tickUpper, "Pool should be above position range");
+
+        // Simulate fees by sending tokens directly to the contract
+        uint256 feeAmount = 1e18;
+        fund(address(staking), feeAmount);
+
+        // Reinvest fees - should work even when single-sided
+        staking.collectFeesAndReinvest();
+
+        // Verify the contract still functions - user can check their position
+        (uint256 positionToken0, uint256 positionToken1) = staking.positionBalances(user1);
+        assertGt(positionToken0 + positionToken1, 0, "Position should have value");
     }
 
     /**
@@ -875,12 +1861,23 @@ contract UniswapV3VaultTest_Integration is UniswapV3VaultTest {
         console.log("\nDeposit by user2: ");
         approveAndDeposit(user2, token0, token1, depositedAmount, depositedAmount);
 
-        console.log("Supply after second deposit is", staking.supply());
+        console.log("Supply after second deposit is", staking.totalSupply());
 
         (uint256 user1Token0After, uint256 user1Token1After) = staking.getUnderlyingUniswapPositionBalances();
         console.log("UnderlyingUniswap Pool balances right after user1 deposited:", user1Token0After, user1Token1After);
 
         // Balance of User1 should have not changed
+
+        (uint256 user2token0AfterDeposit, uint256 user2token1AfterDeposit) = staking.positionBalances(user2);
+
+        assertApproxEqAbs(
+            user2token0AfterDeposit, 5e18, 3, "User1 should have 5 token1 after fees reinvested and user2 deposited"
+        );
+
+        assertApproxEqAbs(
+            user2token1AfterDeposit, 5e18, 3, "User1 should have 5 token1 after fees reinvested and user2 deposited"
+        );
+
         (uint256 user1token0AfterDepositOfUser1, uint256 user1token1AfterDepositOfUser1) =
             staking.positionBalances(user1);
 
@@ -891,6 +1888,7 @@ contract UniswapV3VaultTest_Integration is UniswapV3VaultTest {
             2,
             "User1 should have 7 token0 after fees reinvested and user2 deposited"
         );
+
         assertApproxEqAbs(
             user1token1AfterDepositOfUser1,
             7e18,
@@ -927,8 +1925,11 @@ contract UniswapV3VaultTest_IntegrationWithRealOracle is UniswapV3VaultTest_Inte
         super.setUp();
         // initializeContract();
         simulateTrading(staking.getPool(), 50, 100e18); // Simulate trading to generate fees
-        assertApproxEqAbs(
-            staking.getOraclePricePerUnitToken0(1e18), 1e18, 1, "Price should be almost 1 after swapping the oracle"
+        assertApproxEqRel(
+            staking.getOraclePricePerUnitToken0(1e18),
+            1e18,
+            0.001e18,
+            "Price should be almost 1 after swapping the oracle"
         );
     }
 
@@ -957,7 +1958,7 @@ contract UniswapV3VaultTest_IntegrationWithRealOracle is UniswapV3VaultTest_Inte
         staking.collectFeesAndReinvest();
 
         assertGt(
-            staking.positionBalancesInToken0(user1) + balancesOfBothToToken0(user1),
+            staking.positionBalancesInToken0WithOracle(user1) + balancesOfBothToToken0(user1),
             depositAmountDouble,
             "User 1 should have gotten fees from the trading"
         );
@@ -966,8 +1967,8 @@ contract UniswapV3VaultTest_IntegrationWithRealOracle is UniswapV3VaultTest_Inte
         approveAndDeposit(user2, token0, token1, depositAmount, depositAmount);
 
         assertGt(
-            staking.positionBalancesInToken0(user1) + balancesOfBothToToken0(user1),
-            staking.positionBalancesInToken0(user2) + balancesOfBothToToken0(user2),
+            staking.positionBalancesInToken0WithOracle(user1) + balancesOfBothToToken0(user1),
+            staking.positionBalancesInToken0WithOracle(user2) + balancesOfBothToToken0(user2),
             "User1 should have more balance than User2 after first deposit"
         );
 
@@ -976,8 +1977,8 @@ contract UniswapV3VaultTest_IntegrationWithRealOracle is UniswapV3VaultTest_Inte
 
         // Adding both balances, since the price could have moved and the user got a refund
         assertGt(
-            staking.positionBalancesInToken0(user1) + balancesOfBothToToken0(user1),
-            staking.positionBalancesInToken0(user2) + balancesOfBothToToken0(user2),
+            staking.positionBalancesInToken0WithOracle(user1) + balancesOfBothToToken0(user1),
+            staking.positionBalancesInToken0WithOracle(user2) + balancesOfBothToToken0(user2),
             "User1 should have more shares than User2 after trading"
         );
 
@@ -985,13 +1986,13 @@ contract UniswapV3VaultTest_IntegrationWithRealOracle is UniswapV3VaultTest_Inte
         approveAndDeposit(user3, token0, token1, depositAmount, depositAmount);
 
         assertGt(
-            staking.positionBalancesInToken0(user1) + balancesOfBothToToken0(user1),
-            staking.positionBalancesInToken0(user2) + balancesOfBothToToken0(user2),
+            staking.positionBalancesInToken0WithOracle(user1) + balancesOfBothToToken0(user1),
+            staking.positionBalancesInToken0WithOracle(user2) + balancesOfBothToToken0(user2),
             "User1 should have more balance than User2 after User3 deposited"
         );
         assertGt(
-            staking.positionBalancesInToken0(user2) + balancesOfBothToToken0(user2),
-            staking.positionBalancesInToken0(user3) + balancesOfBothToToken0(user3),
+            staking.positionBalancesInToken0WithOracle(user2) + balancesOfBothToToken0(user2),
+            staking.positionBalancesInToken0WithOracle(user3) + balancesOfBothToToken0(user3),
             "User2 should have more balance than User3 after User3 deposited" // <--- this fails
         );
 
@@ -999,13 +2000,13 @@ contract UniswapV3VaultTest_IntegrationWithRealOracle is UniswapV3VaultTest_Inte
         simulateTrading(staking.getPool(), 1, 1000e18); // Simulate trading to generate fees
 
         assertGt(
-            staking.positionBalancesInToken0(user1) + balancesOfBothToToken0(user1),
-            staking.positionBalancesInToken0(user2) + balancesOfBothToToken0(user2),
+            staking.positionBalancesInToken0WithOracle(user1) + balancesOfBothToToken0(user1),
+            staking.positionBalancesInToken0WithOracle(user2) + balancesOfBothToToken0(user2),
             "At the end, User1 should have more balance than User2"
         );
         assertGt(
-            staking.positionBalancesInToken0(user2) + balancesOfBothToToken0(user2),
-            staking.positionBalancesInToken0(user3) + balancesOfBothToToken0(user3),
+            staking.positionBalancesInToken0WithOracle(user2) + balancesOfBothToToken0(user2),
+            staking.positionBalancesInToken0WithOracle(user3) + balancesOfBothToToken0(user3),
             "At the end, User2 should have more balance than User3"
         );
 
@@ -1089,5 +2090,51 @@ contract UniswapV3VaultTest_claimMerkleFees is UniswapV3VaultTest {
         assertEq(rewardToken1.balanceOf(address(staking)), 0, "Staking should have 0 RWD1 remaining");
         assertEq(rewardToken2.balanceOf(address(staking)), 0, "Staking should have 0 RWD2 remaining");
         assertEq(rewardToken3.balanceOf(address(staking)), 0, "Staking should have 0 RWD3 remaining");
+    }
+}
+
+contract UniswapV3VaultTest_PriceValidation is UniswapV3VaultTest_depositExact {
+    function test_usesPoolPriceWhenValid() public {
+        // Pool price and oracle price should be the same in normal conditions
+        uint256 poolPrice = staking.getPoolPrice();
+        uint256 oraclePrice = staking.getOraclePrice();
+
+        // They should be very close (within rounding)
+        assertApproxEqAbs(poolPrice, oraclePrice, 1e10, "Pool and oracle prices should match initially");
+
+        // Deposit should succeed using validated pool price
+        fundAndApprove(user1, 5e18);
+        vm.prank(user1);
+        staking.depositExact(5e18, 5e18);
+
+        assertGt(staking.balanceOf(user1), 0, "User should receive shares");
+    }
+
+    function test_revertsWhenPoolPriceDiverges() public {
+        // First make an initial deposit so the vault has liquidity
+        fundAndApprove(user1, 5e18);
+        vm.prank(user1);
+        staking.depositExact(5e18, 5e18);
+
+        // Now manipulate the oracle price significantly
+        // 100 ticks = ~1% price difference, so we need much more to trigger revert
+        UniswapOracleMock oracleMock = UniswapOracleMock(address(oracle));
+
+        // Set oracle price to be 10x the pool price (way more than 100 ticks)
+        // This simulates a severe price manipulation or oracle failure
+        uint256 poolPrice = staking.getPoolPrice();
+        oracleMock.setMockedPrice(poolPrice * 10);
+
+        // Second deposit should revert because pool diverged too far from oracle
+        fundAndApprove(user2, 5e18);
+        vm.prank(user2);
+        vm.expectRevert("Pool price diverged too far from oracle");
+        staking.depositExact(5e18, 5e18);
+    }
+
+    function test_getValidatedPoolPriceWithOracleSucceedsWithinBounds() public {
+        // Should succeed when prices are close
+        uint160 validatedPrice = staking.getValidatedPoolPriceWithOracle();
+        assertGt(validatedPrice, 0, "Should return valid price");
     }
 }

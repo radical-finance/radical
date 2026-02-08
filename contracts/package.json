@@ -7,6 +7,7 @@
   "scripts": {
     "calculate_ticks": "yarn ts-node --esm ts/calculate_uni_tickets.ts",
     "search_deposits": "npx tsx -r dotenv/config ts/searchForDeposits.ts dotenv_config_path=../.env",
+    "contract-analysis": "python3 -m slither . --filter-paths lib",
     "rebuild": "forge clean && forge build",
     "apply_patches": "./script/bash/apply_patches.sh",
     "start_devchain": "./script/bash/start_devchain.sh",

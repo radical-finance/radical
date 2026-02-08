@@ -5,7 +5,7 @@ killall anvil || true
 
 # sleep 2
 
-anvil --steps-tracing & 
+anvil --steps-tracing > /dev/null 2>&1 &
 # --block-time 1
 
 # Wait for anvil to start on port 8545

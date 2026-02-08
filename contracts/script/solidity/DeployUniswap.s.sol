@@ -7,20 +7,20 @@ import "forge-std/Script.sol";
 import "forge-std/Test.sol";
 // import "forge-std/StdUtils.sol"; // Add import for StdUtils which might contain toAsciiString
 import {UniswapV3Factory} from "v3-core/contracts/UniswapV3Factory.sol";
-import {SwapRouter} from "v3-periphery/SwapRouter.sol";
-import {WETH10} from "weth10/WETH10.sol";
-// import {NFTDescriptor} from "v3-periphery/libraries/NFTDescriptor.sol";
-import {NonfungibleTokenPositionDescriptor} from "v3-periphery/NonfungibleTokenPositionDescriptor.sol";
-import {PoolAddress} from "v3-periphery/libraries/PoolAddress.sol";
-// Remove duplicate import - we'll use the local version
-import {NonfungiblePositionManager} from "v3-periphery/NonfungiblePositionManager.sol";
-import {INonfungiblePositionManager} from "v3-periphery/interfaces/INonfungiblePositionManager.sol";
-import {IUniswapV3Pool} from "v3-core/contracts/interfaces/IUniswapV3Pool.sol";
-import {UniswapV3Pool} from "v3-core/contracts/UniswapV3Pool.sol";
-import "v3-core/contracts/libraries/TickMath.sol";
+import {SwapRouter} from "@uniswap/v3-periphery/contracts/SwapRouter.sol";
+import {WETH10} from "weth10/contracts/WETH10.sol";
+import {
+    NonfungibleTokenPositionDescriptor
+} from "@uniswap/v3-periphery/contracts/NonfungibleTokenPositionDescriptor.sol";
+import {PoolAddress} from "@uniswap/v3-periphery/contracts/libraries/PoolAddress.sol";
+import {NonfungiblePositionManager} from "@uniswap/v3-periphery/contracts/NonfungiblePositionManager.sol";
+import {INonfungiblePositionManager} from "@uniswap/v3-periphery/contracts/interfaces/INonfungiblePositionManager.sol";
+import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
+import {UniswapV3Pool} from "@uniswap/v3-core/contracts/UniswapV3Pool.sol";
+import "@uniswap/v3-core/contracts/libraries/TickMath.sol";
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {ERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 
 // Mintable ERC20 implementation with public mint
 contract MintableERC20 is ERC20 {
@@ -161,11 +161,12 @@ contract DeployUniswap is Script {
         uint24 fee
     ) internal {
         string memory jsonPath = "./artifacts/uniswap_addresses_dev.json";
+        address caller = msg.sender; // Use msg.sender to get the caller address
 
         // Create JSON object
         string memory json = "{\n";
 
-        json = buildJSONSegment(json, "caller", address(this));
+        json = buildJSONSegment(json, "caller", caller);
         json = buildJSONSegment(json, "WETH10", weth10);
         json = buildJSONSegment(json, "UniswapV3Factory", factory);
         json = buildJSONSegment(json, "NonfungibleTokenPositionDescriptor", positionDescriptor);
@@ -303,7 +304,7 @@ contract DeployUniswap is Script {
             amount1Desired: mintAmount,
             amount0Min: 0,
             amount1Min: 0,
-            recipient: address(this),
+            recipient: caller,
             deadline: block.timestamp + 15 minutes
         });
 

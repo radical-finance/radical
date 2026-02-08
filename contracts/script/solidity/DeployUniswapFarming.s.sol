@@ -5,6 +5,7 @@ import {Script, console} from "forge-std/Script.sol";
 import {UniswapV3Vault} from "@src/strategies/UniswapV3Vault.sol";
 import {UniswapOracle} from "@src/oracles/UniswapOracle.sol";
 import {IUniswapTooling} from "@interfaces/adaptors/IUniswapTooling.sol";
+import {TickBounds, TickConfigWindow, TickConfigLib} from "@src/libraries/TickConfigLib.sol";
 import {IUniswapV3Factory} from "v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 import {INonfungiblePositionManager} from "@interfaces/adaptors/INonfungiblePositionManager.sol";
 import {IERC20} from "@openzeppelin/contracts8/token/ERC20/IERC20.sol";
@@ -69,22 +70,17 @@ contract DeployUniswapFarming is Script {
         UniswapOracle oracle = new UniswapOracle();
         oracle.initialize(uniswapTooling);
 
-        UniswapV3Vault.TokenPair memory tokens =
-            UniswapV3Vault.TokenPair({tokenA: IERC20(token0), tokenB: IERC20(token1)});
-
-        UniswapV3Vault.TickerConfig memory tickerConfig =
-            UniswapV3Vault.TickerConfig({tickerCenter: 0, tickerWindow: 10});
-
         staking.initialize(
             IUniswapV3Factory(factoryAddress),
             INonfungiblePositionManager(nftPositionManager),
             oracle,
             oracleTwapInterval,
-            tokens,
+            UniswapV3Vault.TokenPairUnsorted({tokenA: IERC20(token0), tokenB: IERC20(token1)}),
             fees,
             feeVault,
-            tickerConfig,
-            uniswapTooling
+            TickConfigLib.toTickBounds(TickConfigWindow({tickCenter: 0, tickWindowSize: 10})),
+            uniswapTooling,
+            UniswapV3Vault.RiskConfig({maxTickDivergence: 100, minDelayDepositSeconds: 5, transferWindowSeconds: 10})
         );
 
         address deployedTo = address(staking);

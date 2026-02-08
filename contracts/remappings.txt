@@ -1,9 +1,16 @@
 
 @src=src
 @test=test
-@openzeppelin/contracts=lib/openzeppelin-contracts/contracts
+forge-std/=lib/forge-std/src/
 @openzeppelin/contracts8=lib/openzeppelin-contracts8/contracts
-@uniswap/v3-core=lib/v3-core
-@uniswap/v3-periphery=lib/v3-periphery
+@openzeppelin/contracts=lib/openzeppelin-contracts/contracts
+@openzeppelin/contracts-upgradeable=lib/openzeppelin-contracts-upgradeable/contracts
+@uniswap/v3-core/contracts/=lib/v3-core/contracts/
+@uniswap/v3-periphery/contracts/=lib/v3-periphery/contracts/
 @uniswap/lib=lib/solidity-lib
 @interfaces/=src/interfaces
+lib/openzeppelin-contracts-upgradeable/:@openzeppelin/contracts/=lib/openzeppelin-contracts8/contracts
+lib/v3-periphery/contracts:@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts
+base64-sol/=lib/base64-sol/
+v3-core/=lib/v3-core/
+weth10/contracts/=lib/weth10/contracts/

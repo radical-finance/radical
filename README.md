@@ -1,4 +1,4 @@
-# radical-monorepo
+# Radical
 
 Radical is an on-chain yield optimizer.
 

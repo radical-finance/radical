@@ -14,9 +14,36 @@ contract UniswapTooling is IUniswapTooling {
         return TickMath.getSqrtRatioAtTick(tick);
     }
 
-    // function TickMath_getTickAtSqrtRatio(uint160 sqrtPriceX96) external pure override returns (int24) {
-    //     return TickMath.getTickAtSqrtRatio(sqrtPriceX96);
-    // }
+    function TickMath_getTickAtSqrtRatio(uint160 sqrtPriceX96) external pure override returns (int24) {
+        return TickMath.getTickAtSqrtRatio(sqrtPriceX96);
+    }
+
+    function LiquidityAmounts_getLiquidityForAmount0(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint256 amount0)
+        external
+        pure
+        override
+        returns (uint128)
+    {
+        return LiquidityAmounts.getLiquidityForAmount0(sqrtRatioAX96, sqrtRatioBX96, amount0);
+    }
+
+    function LiquidityAmounts_getLiquidityForAmount1(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint256 amount1)
+        external
+        pure
+        override
+        returns (uint128)
+    {
+        return LiquidityAmounts.getLiquidityForAmount1(sqrtRatioAX96, sqrtRatioBX96, amount1);
+    }
+
+    function LiquidityAmounts_getAmountsForLiquidity(
+        uint160 sqrtRatioX96,
+        uint160 sqrtRatioAX96,
+        uint160 sqrtRatioBX96,
+        uint128 liquidity
+    ) external pure override returns (uint256 amount0, uint256 amount1) {
+        return LiquidityAmounts.getAmountsForLiquidity(sqrtRatioX96, sqrtRatioAX96, sqrtRatioBX96, liquidity);
+    }
 
     function LiquidityAmounts_getAmount0ForLiquidity(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint128 liquidity)
         external

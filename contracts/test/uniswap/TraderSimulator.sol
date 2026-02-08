@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 pragma abicoder v2;
 
 import {IERC20} from "@openzeppelin/contracts8/token/ERC20/IERC20.sol";
-import {ISwapRouter} from "v3-periphery/interfaces/ISwapRouter.sol";
+import {ISwapRouter} from "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 
 contract TraderSimulator {
     function trade(address token0, address token1, address swapRouter) public {
