@@ -1,0 +1,24 @@
+[submodule "contracts/lib/forge-std"]
+	path = contracts/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "contracts/lib/v3-core"]
+	path = contracts/lib/v3-core
+	url = https://github.com/Uniswap/v3-core
+[submodule "contracts/lib/v3-periphery"]
+	path = contracts/lib/v3-periphery
+	url = https://github.com/Uniswap/v3-periphery
+[submodule "contracts/lib/weth10"]
+	path = contracts/lib/weth10
+	url = https://github.com/weth10/weth10
+[submodule "contracts/lib/base64"]
+	path = contracts/lib/base64
+	url = https://github.com/Brechtpd/base64
+[submodule "contracts/lib/solidity-lib"]
+	path = contracts/lib/solidity-lib
+	url = https://github.com/Uniswap/solidity-lib
+[submodule "contracts/lib/openzeppelin-contracts"]
+	path = contracts/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "contracts/lib/openzeppelin-contracts8"]
+	path = contracts/lib/openzeppelin-contracts8
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
