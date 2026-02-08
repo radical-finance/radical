@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  check:
+    defaults:
+      run:
+        working-directory: contracts
+    strategy:
+      fail-fast: true
+
+    name: Foundry project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Check for contract changes
+        id: check-changes
+        run: |
+          # Check if current commit has changes to contract-related folders
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # For push events, check the current commit
+            COMMIT_SHA="${{ github.sha }}"
+            PARENT_SHA=$(git rev-parse ${COMMIT_SHA}^)
+            CHANGED_FILES=$(git diff --name-only ${PARENT_SHA} ${COMMIT_SHA})
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            # For PRs, check against the base branch
+            CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }})
+          else
+            # For workflow_dispatch, assume changes exist
+            CHANGED_FILES="contracts/src/dummy"
+          fi
+          
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          
+          # Check if any changed files are in the relevant directories
+          RELEVANT_CHANGES=$(echo "$CHANGED_FILES" | grep -E '^contracts/(script/solidity|test|src)/' || true)
+          
+          if [ -z "$RELEVANT_CHANGES" ]; then
+            echo "No changes to contracts/script/solidity, contracts/test, or contracts/src directories"
+            echo "has-changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "Found relevant changes:"
+            echo "$RELEVANT_CHANGES"
+            echo "has-changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Skip tests - No contract changes
+        if: steps.check-changes.outputs.has-changes == 'false'
+        run: |
+          echo "✅ No changes to contract-related directories detected."
+          echo "Skipping Foundry tests as they are not needed for this commit."
+          exit 0
+
+      - name: Install Foundry
+        if: steps.check-changes.outputs.has-changes == 'true'
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.1.0
+
+      - name: Show Forge version
+        if: steps.check-changes.outputs.has-changes == 'true'
+        run: |
+          forge --version
+
+      - name: Run Forge fmt
+        if: steps.check-changes.outputs.has-changes == 'true'
+        run: |
+          forge fmt --check
+        id: fmt
+
+      - name: Run Forge build
+        if: steps.check-changes.outputs.has-changes == 'true'
+        run: |
+          npm run build
+        id: build
+
+      - name: Run Forge tests
+        if: steps.check-changes.outputs.has-changes == 'true'
+        run: |
+          ./script/bash/start_devchain_and_run_tests.sh
+        id: test

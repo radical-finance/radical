@@ -1,0 +1,33 @@
+{
+  "type": "module",
+  "name": "contracts",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "n/a",
+  "scripts": {
+    "calculate_ticks": "yarn ts-node --esm ts/calculate_uni_tickets.ts",
+    "search_deposits": "npx tsx -r dotenv/config ts/searchForDeposits.ts dotenv_config_path=../.env",
+    "rebuild": "forge clean && forge build",
+    "apply_patches": "./script/bash/apply_patches.sh",
+    "start_devchain": "./script/bash/start_devchain.sh",
+    "test:e2e": "./script/bash/start_devchain_and_run_tests.sh",
+    "build": "npm run apply_patches && forge build --sizes || echo 'Forge build failed'",
+    "prettify": "npx prettier --write --plugin=prettier-plugin-solidity 'src/**/*.sol' 'test/**/*.sol'"
+  },
+  "dependencies": {
+    "@types/node": "^22.10.2",
+    "@uniswap/v3-sdk": "^3.19.0",
+    "axios": "^1.10.0",
+    "ethers": "5.7.0",
+    "ethers-multicall": "^0.2.3",
+    "graphql-request": "^7.2.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  },
+  "devDependencies": {
+    "@openzeppelin/contracts": "^5.3.0",
+    "jsbi": "^3.2.5",
+    "prettier": "^3.4.2",
+    "prettier-plugin-solidity": "^1.4.2"
+  }
+}

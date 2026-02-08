@@ -1,0 +1,9 @@
+
+@src=src
+@test=test
+@openzeppelin/contracts=lib/openzeppelin-contracts/contracts
+@openzeppelin/contracts8=lib/openzeppelin-contracts8/contracts
+@uniswap/v3-core=lib/v3-core
+@uniswap/v3-periphery=lib/v3-periphery
+@uniswap/lib=lib/solidity-lib
+@interfaces/=src/interfaces
